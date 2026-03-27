@@ -928,8 +928,13 @@ def process_account(account_config: AccountConfig, global_config: GlobalConfig) 
             result['success'] = True  # 登录成功，只是没有服务器
             return result
         
+        TARGET_ORDER_ID = "468217"
+        
         # 检查并续期
         for order_id, (can_renew, can_renew_date) in servers.items():
+            
+            if order_id != TARGET_ORDER_ID:
+                continue
             logger.info(f"检查服务器: {order_id}")
             if can_renew:
                 logger.info(f"⏰ 服务器 {order_id} 可以续期")
