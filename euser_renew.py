@@ -90,25 +90,25 @@ ACCOUNTS = [
     AccountConfig(
         email=os.getenv("EUSERV_EMAIL2"),
         password=os.getenv("EUSERV_PASSWORD2"),
-        imap_server=os.getenv("IMAP_SERV2"),
+        imap_server=os.getenv("IMAP_SERV2", "imap.gmail.com"),
         email_password=os.getenv("EMAIL_PASS2")  # Gmail 应用专用密码
     ),
     AccountConfig(
         email=os.getenv("EUSERV_EMAIL3"),
         password=os.getenv("EUSERV_PASSWORD3"),
-        imap_server=os.getenv("IMAP_SERV3"),
+        imap_server=os.getenv("IMAP_SERV3", "imap.gmail.com"),
         email_password=os.getenv("EMAIL_PASS3")  # Gmail 应用专用密码
     ),
     AccountConfig(
         email=os.getenv("EUSERV_EMAIL4"),
         password=os.getenv("EUSERV_PASSWORD4"),
-        imap_server=os.getenv("IMAP_SERV4"),
+        imap_server=os.getenv("IMAP_SERV4", "imap.gmail.com"),
         email_password=os.getenv("EMAIL_PASS4")  # Gmail 应用专用密码
     ),
     AccountConfig(
         email=os.getenv("EUSERV_EMAIL5"),
         password=os.getenv("EUSERV_PASSWORD5"),
-        imap_server=os.getenv("IMAP_SERV5"),
+        imap_server=os.getenv("IMAP_SERV5", "imap.gmail.com"),
         email_password=os.getenv("EMAIL_PASS5")  # Gmail 应用专用密码
     ),
 ]
