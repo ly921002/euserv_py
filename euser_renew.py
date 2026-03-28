@@ -83,7 +83,7 @@ ACCOUNTS = [
     AccountConfig(
         email=os.getenv("EUSERV_EMAIL"),
         password=os.getenv("EUSERV_PASSWORD"),
-        imap_server=os.getenv("IMAP_SERV"),
+        imap_server=os.getenv("IMAP_SERV", "imap.gmail.com"),
         email_password=os.getenv("EMAIL_PASS")  # Gmail 应用专用密码
     ),
     # 添加更多账号示例：
@@ -362,42 +362,74 @@ def get_euserv_pin(email: str, email_password: str, imap_server: str) -> Optiona
 
 class EUserv:
     """EUserv 操作类"""
-    
+
+    # Cookie 文件保存目录
+    COOKIE_DIR = "cookies"
+
     def __init__(self, config: AccountConfig):
         self.config = config
         self.session = requests.Session()
         self.sess_id = None
         self.c_id = None
-        
+        # 每个账号对应一个独立的 cookie 文件
+        os.makedirs(self.COOKIE_DIR, exist_ok=True)
+        safe_name = re.sub(r'[^\w@.-]', '_', config.email)
+        self.cookie_file = os.path.join(self.COOKIE_DIR, f"{safe_name}.json")
+        # 初始化时尝试加载已保存的 Cookie（让服务器识别为受信任设备，跳过 PIN）
+        self._load_cookies()
+
+    def _save_cookies(self):
+        """将当前 session 的 Cookie 持久化到文件"""
+        try:
+            cookies = {c.name: c.value for c in self.session.cookies}
+            with open(self.cookie_file, 'w', encoding='utf-8') as f:
+                json.dump(cookies, f)
+            logger.info(f"✅ 信任设备 Cookie 已保存: {self.cookie_file}")
+        except Exception as e:
+            logger.warning(f"⚠️ 保存 Cookie 失败: {e}")
+
+    def _load_cookies(self):
+        """从文件加载 Cookie 到 session（登录前携带，让服务器跳过 PIN 验证）"""
+        if not os.path.exists(self.cookie_file):
+            return
+        try:
+            with open(self.cookie_file, 'r', encoding='utf-8') as f:
+                cookies = json.load(f)
+            for name, value in cookies.items():
+                self.session.cookies.set(name, value, domain='support.euserv.com')
+            logger.info(f"🍪 已加载信任设备 Cookie，登录时将跳过 PIN 验证")
+        except Exception as e:
+            logger.warning(f"⚠️ 加载 Cookie 失败: {e}")
+
     def login(self) -> bool:
-        """登录 EUserv（支持验证码和 PIN）"""
+        """登录 EUserv（支持验证码和 PIN，Cookie 持久化跳过 PIN）"""
         logger.info(f"正在登录账号: {self.config.email}")
-        
+
         headers = {
             'user-agent': USER_AGENT,
             'origin': 'https://www.euserv.com'
         }
         url = "https://support.euserv.com/index.iphp"
         captcha_url = "https://support.euserv.com/securimage_show.php"
-        
+
         try:
-            # 获取 sess_id
+            # 获取 sess_id（session 里已携带 Cookie，服务器可识别为受信任设备）
             sess = self.session.get(url, headers=headers)
             sess_id_match = re.search(r'sess_id["\']?\s*[:=]\s*["\']?([a-zA-Z0-9]{30,100})["\']?', sess.text)
             if not sess_id_match:
                 sess_id_match = re.search(r'sess_id=([a-zA-Z0-9]{30,100})', sess.text)
-            
+
             if not sess_id_match:
                 logger.error("❌ 无法获取 sess_id")
                 return False
-            
+
             sess_id = sess_id_match.group(1)
             logger.debug(f"获取到 sess_id: {sess_id[:20]}...")
-            
+
             # 访问 logo
             logo_png_url = "https://support.euserv.com/pic/logo_small.png"
             self.session.get(logo_png_url, headers=headers)
-            
+
             # 提交登录表单
             login_data = {
                 'email': self.config.email,
@@ -407,12 +439,12 @@ class EUserv:
                 'subaction': 'login',
                 'sess_id': sess_id
             }
-            
+
             logger.debug("提交登录表单...")
             response = self.session.post(url, headers=headers, data=login_data)
             response.raise_for_status()
 
-            #解析返回页面
+            # 解析返回页面
             soup = BeautifulSoup(response.text, "html.parser")
 
             # 检查登录错误
@@ -422,66 +454,64 @@ class EUserv:
             if 'kc2_login_iplock_cdown' in response.text:
                 logger.error("❌ 密码错误次数过多，账号被锁定，请5分钟后重试")
                 return False
-            
+
             # 处理验证码
             if 'captcha' in response.text.lower():
                 logger.info("⚠️ 需要验证码，正在识别...")
 
-                max_captcha_retries = 10  # 验证码最多重试10次
+                max_captcha_retries = 10
                 for captcha_attempt in range(max_captcha_retries):
                     if captcha_attempt > 0:
                         logger.warning(f"验证码识别失败，第 {captcha_attempt + 1}/{max_captcha_retries} 次重试...")
-                        time.sleep(3)  # 等待一下再重试
+                        time.sleep(3)
 
-                    # 识别验证码
                     captcha_code = recognize_and_calculate(captcha_url, self.session)
-                
+
                     if not captcha_code:
                         logger.error("❌ 验证码识别失败")
                         return False
-                    
+
                     captcha_data = {
                         'subaction': 'login',
                         'sess_id': sess_id,
                         'captcha_code': captcha_code
                     }
-                
+
                     response = self.session.post(url, headers=headers, data=captcha_data)
                     response.raise_for_status()
-                    
-                    # 检查验证码是否正确
+
                     if 'captcha' in response.text.lower():
                         logger.warning(f"❌ 验证码错误（第 {captcha_attempt + 1} 次）")
                         if captcha_attempt < max_captcha_retries - 1:
-                            continue  # 继续重试
+                            continue
                         else:
                             logger.error("❌ 验证码错误次数过多，重新进入登录流程")
                             return False
                     else:
                         soup = BeautifulSoup(response.text, "html.parser")
                         logger.info("✅ 验证码验证成功")
-                        break  # 验证码正确，跳出循环
-            
+                        break
 
             # 处理 PIN 验证
+            # 若之前 Cookie 有效，服务器不会返回 PIN 页面，直接跳过这段
             if 'PIN that you receive via email' in response.text:
                 self.c_id = soup.find("input", {"name": "c_id"})["value"]
-                logger.info("⚠️ 需要 PIN 验证")
-                time.sleep(3)  # 等待邮件到达
-                
+                logger.info("⚠️ 需要 PIN 验证（首次登录或 Cookie 已失效）")
+                time.sleep(3)
+
                 pin = get_euserv_pin(
                     self.config.email,
                     self.config.email_password,
                     self.config.imap_server
                 )
-                
+
                 if not pin:
                     logger.error("❌ 获取 PIN 码失败")
                     return False
-                
-                
+
                 login_confirm_data = {
                     'pin': pin,
+                    'save_for_auto_login': 'on',
                     'sess_id': sess_id,
                     'Submit': 'Confirm',
                     'subaction': 'login',
@@ -490,6 +520,9 @@ class EUserv:
                 response = self.session.post(url, headers=headers, data=login_confirm_data)
                 response.raise_for_status()
 
+                # PIN 验证成功后，服务器种下信任设备 Cookie，立即持久化
+                self._save_cookies()
+                logger.info("🍪 PIN 验证完成，信任设备 Cookie 已保存，下次登录将跳过 PIN")
 
             # 检查登录成功
             success_checks = [
@@ -497,7 +530,7 @@ class EUserv:
                 'Confirm or change your customer data here' in response.text,
                 'logout' in response.text.lower() and 'customer' in response.text.lower()
             ]
-            
+
             if any(success_checks):
                 logger.info(f"✅ 账号 {self.config.email} 登录成功")
                 self.sess_id = sess_id
@@ -505,7 +538,7 @@ class EUserv:
             else:
                 logger.error(f"❌ 账号 {self.config.email} 登录失败")
                 return False
-                
+
         except Exception as e:
             logger.error(f"❌ 登录过程出现异常: {e}", exc_info=True)
             return False
