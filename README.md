@@ -1,33 +1,50 @@
-# euserv德鸡自动续期
+# 🐔 EUSERV 德鸡自动续期脚本
 
-euserv免费机需要每个月续期，本项目实现自动续期，支持github的action或者vps执行
-* [在 VPS 虚拟主机部署](./README_VPS.md)
+[![](https://img.shields.io/badge/Language-Python-blue.svg)](https://www.python.org/)
+[![](https://img.shields.io/badge/Deployment-GitHub_Actions-orange.svg)]()
+[![](https://img.shields.io/badge/Deployment-VPS-green.svg)]()
 
-## 1.主要功能
-   
-   实现每天自动登录，查找是否有需要可续期的机器，如果达到可以续期时间，则自动续期
+由于 EUserv 免费主机需要每月手动续期，本项目旨在实现**全自动续期**，支持 GitHub Actions 定时任务或 VPS 本地部署。
 
-## 2.action部署
+---
 
- 2.1  **Fork 本仓库**: 点击右上角的 "Fork" 按钮，将此项目复制到你自己的 GitHub 账户下。
+## ✨ 主要功能
 
- 2.2  **action 保活（解决github的action两个月自动停止问题）**: 在你 Fork 的仓库中，进入 `Settings` -> `Actions` -> `General`，然后拉到页面最底部，勾选Read and write permissions选项，点击Save保存
- 
- 2.3  **配置 Secrets**: 在你 Fork 的仓库中，进入 `Settings` -> `Secrets and variables` -> `Actions`。点击 `New repository secret`，添加下面第3点的变量：
- 
-## 3.配置变量（github action部署，如果自己vps部署直接代码替换参数）
+* **全自动续期**：每天自动登录并检查是否有可续期的机器，达到时间自动触发续期逻辑。
+* **多账号支持**：支持配置多个账号并行续期。
+* **异常提醒**：登录失败或获取列表异常时，通过多种渠道发送通知提醒人工处理。
+* **续期反馈**：续期成功后发送通知，告别遗忘。
+* **域名邮箱适配**：支持登录邮箱与接收 PIN 码邮箱不一致的场景。
 
-| Secret 名称       | 是否必须       | 描述                                                                                                                              |
-| ----------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `EUSERV_EMAIL`    | **是**   | 配置euserv登录邮箱，如果需要多账号续期配置多个AccountConfig对象 |
-| `EUSERV_PASSWORD` | **是**   | 配置euserv登录密码，如果需要多账号续期配置多个AccountConfig对象 |
-| `EMAIL_PASS` | **是**   | 配置对应账号邮箱的应用专用密码（注意：这个密码需要去邮箱设置里面开启IMAP并生成应用专用密码，设置方法可以询问AI） |
-| `TG_BOT_TOKEN`    | **否**   | 配置tg账号的token，非必须，不想收通知可以不配置                                         |
-| `TG_CHAT_ID`      | **否**   | 配置tg账号的userid，非必须，不想收通知可以不配置                                        |
-| `BARK_URL`      | **否**   | 配置bark推送地址(ios系统)，例如：`https://api.day.app/your_key/`。非必须，不想收通知可以不配置        |
+---
 
-## 4.运行
+## 🚀 部署方式
 
-  1. **【重要提示】**：以上配置完成后，请务必进入`Actions`页面手动执行一次工作流。**（GitHub默认会禁用新仓库的Actions，此操作是启用关键！）**
+### 方案 A：GitHub Actions 部署（推荐）
 
-  2.手动执行一次成功后，以后等待定时自动执行就可以了，如果配置了tg信息运行后会收到通知
+1.  **Fork 本仓库**：点击右上角 `Fork` 按钮到你的账户下。
+2.  **开启权限**：进入 `Settings` -> `Actions` -> `General`，拉至底部勾选 **Read and write permissions** 并保存。
+3.  **配置 Secrets**：进入 `Settings` -> `Secrets and variables` -> `Actions`，点击 `New repository secret` 添加下方表格中的变量。
+
+### 方案 B：VPS 虚拟主机部署
+* 详情请参阅：[VPS 部署指南](./README_VPS.md)。
+
+---
+
+## ⚙️ 配置变量 (Secrets)
+
+| Secret 名称 | 是否必须 | 描述 |
+| :--- | :---: | :--- |
+| `EUSERV_EMAIL` | **是** | Euserv 登录邮箱。多账号请配置 `EUSERV_EMAIL2` 等。 |
+| `EUSERV_PASSWORD` | **是** | Euserv 登录密码。多账号请配置 `EUSERV_PASSWORD2` 等。 |
+| `EMAIL_PASS` | **是** | 邮箱应用专用密码（需开启 IMAP）。多账号配置 `EMAIL_PASS2` 等。 |
+| `TG_BOT_TOKEN` | 否 | Telegram Bot Token。 |
+| `TG_CHAT_ID` | 否 | Telegram 用户 ID。 |
+| `BARK_URL` | 否 | iOS Bark 推送地址。 |
+
+---
+
+## 📅 运行说明
+
+1.  **首次运行**：配置完成后，务必手动在 `Actions` 页面执行一次工作流以激活脚本。
+2.  **自动执行**：手动执行成功后，系统将按照定时任务自动运行。

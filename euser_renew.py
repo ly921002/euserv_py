@@ -26,7 +26,8 @@ from imap_tools import MailBox, AND
 from urllib.parse import quote
 
 from dotenv import load_dotenv
-load_dotenv('dev.env')  # 本地配置
+if os.path.exists('dev.env'):
+    load_dotenv('dev.env')
 
 # 配置日志
 logging.basicConfig(
@@ -47,14 +48,71 @@ ocr_lock = threading.Lock()
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.61 Safari/537.36"
 
 
+# ============== 工具函数 ==============
+def resolve_imap_server(email: str) -> str:
+    """
+    根据邮箱域名自动推断 IMAP 服务器地址。
+    支持常见邮箱，未识别时返回 None（需手动配置）。
+    """
+    IMAP_MAP = {
+        'gmail.com':       'imap.gmail.com',
+        'googlemail.com':  'imap.gmail.com',
+        'outlook.com':     'imap-mail.outlook.com',
+        'hotmail.com':     'imap-mail.outlook.com',
+        'live.com':        'imap-mail.outlook.com',
+        'msn.com':         'imap-mail.outlook.com',
+        'yahoo.com':       'imap.mail.yahoo.com',
+        'yahoo.co.uk':     'imap.mail.yahoo.co.uk',
+        'yahoo.co.jp':     'imap.mail.yahoo.co.jp',
+        'icloud.com':      'imap.mail.me.com',
+        'me.com':          'imap.mail.me.com',
+        'mac.com':         'imap.mail.me.com',
+        'qq.com':          'imap.qq.com',
+        '163.com':         'imap.163.com',
+        '126.com':         'imap.126.com',
+        'sina.com':        'imap.sina.com',
+        'foxmail.com':     'imap.qq.com',
+        'protonmail.com':  'imap.protonmail.com',  # 需开启 Bridge
+        'proton.me':       'imap.protonmail.com',
+        'zoho.com':        'imap.zoho.com',
+        'aol.com':         'imap.aol.com',
+        'gmx.com':         'imap.gmx.com',
+        'gmx.de':          'imap.gmx.net',
+        'web.de':          'imap.web.de',
+        't-online.de':     'secureimap.t-online.de',
+    }
+    if not email or '@' not in email:
+        return 'imap.gmail.com'
+    domain = email.strip().lower().split('@')[-1]
+    server = IMAP_MAP.get(domain)
+    if server:
+        return server
+    # 未知域名：尝试通用规则 imap.<domain>
+    logger.warning(f"⚠️ 未知邮箱域名 '{domain}'，使用推断地址 imap.{domain}，如不可用请手动配置")
+    return f'imap.{domain}'
+
+
 # ============== 配置数据类 ==============
 class AccountConfig:
-    """单个账号配置"""
-    def __init__(self, email, password, imap_server='imap.gmail.com', email_password=''):
+    """
+    单个账号配置。
+    email_pin: 用于接收 PIN 码的邮箱（可选）。
+               未配置时自动使用 email 字段。
+    imap_server: IMAP 服务器地址（可选）。
+                 未配置时根据 email_pin（或 email）的域名自动推断。
+    email_password: email_pin 邮箱的密码 / Gmail 应用专用密码。
+    """
+    def __init__(self, email, password, email_pin='', email_password='', imap_server=''):
         self.email = email
         self.password = password
-        self.imap_server = imap_server
+        # email_pin 未配置则回退到 email
+        self.email_pin = email_pin if email_pin else email
         self.email_password = email_password if email_password else password
+        # imap_server 未配置则自动推断
+        if imap_server:
+            self.imap_server = imap_server
+        else:
+            self.imap_server = resolve_imap_server(self.email_pin)
 
 
 class GlobalConfig:
@@ -79,37 +137,41 @@ GLOBAL_CONFIG = GlobalConfig(
 
 
 # 账号列表配置
+# EMAIL_PIN: 可选。用于接收登录/续期 PIN 码的邮箱。
+#            未配置时自动使用 EUSERV_EMAIL。
+# IMAP_SERV: 已废弃，改为根据 EMAIL_PIN（或 EUSERV_EMAIL）域名自动推断。
+#            如需覆盖，可通过 AccountConfig(imap_server=...) 手动指定。
 ACCOUNTS = [
     AccountConfig(
         email=os.getenv("EUSERV_EMAIL"),
         password=os.getenv("EUSERV_PASSWORD"),
-        imap_server=os.getenv("IMAP_SERV", "imap.gmail.com"),
-        email_password=os.getenv("EMAIL_PASS")  # Gmail 应用专用密码
+        email_pin=os.getenv("EMAIL_PIN"),        # 可选，未配置则使用 EUSERV_EMAIL
+        email_password=os.getenv("EMAIL_PASS"),  # PIN 邮箱的密码（Gmail 应用专用密码等）
     ),
     # 添加更多账号示例：
     AccountConfig(
         email=os.getenv("EUSERV_EMAIL2"),
         password=os.getenv("EUSERV_PASSWORD2"),
-        imap_server=os.getenv("IMAP_SERV2", "imap.gmail.com"),
-        email_password=os.getenv("EMAIL_PASS2")  # Gmail 应用专用密码
+        email_pin=os.getenv("EMAIL_PIN2"),
+        email_password=os.getenv("EMAIL_PASS2"),
     ),
     AccountConfig(
         email=os.getenv("EUSERV_EMAIL3"),
         password=os.getenv("EUSERV_PASSWORD3"),
-        imap_server=os.getenv("IMAP_SERV3", "imap.gmail.com"),
-        email_password=os.getenv("EMAIL_PASS3")  # Gmail 应用专用密码
+        email_pin=os.getenv("EMAIL_PIN3"),
+        email_password=os.getenv("EMAIL_PASS3"),
     ),
     AccountConfig(
         email=os.getenv("EUSERV_EMAIL4"),
         password=os.getenv("EUSERV_PASSWORD4"),
-        imap_server=os.getenv("IMAP_SERV4", "imap.gmail.com"),
-        email_password=os.getenv("EMAIL_PASS4")  # Gmail 应用专用密码
+        email_pin=os.getenv("EMAIL_PIN4"),
+        email_password=os.getenv("EMAIL_PASS4"),
     ),
     AccountConfig(
         email=os.getenv("EUSERV_EMAIL5"),
         password=os.getenv("EUSERV_PASSWORD5"),
-        imap_server=os.getenv("IMAP_SERV5", "imap.gmail.com"),
-        email_password=os.getenv("EMAIL_PASS5")  # Gmail 应用专用密码
+        email_pin=os.getenv("EMAIL_PIN5"),
+        email_password=os.getenv("EMAIL_PASS5"),
     ),
 ]
 
@@ -500,7 +562,7 @@ class EUserv:
                 time.sleep(3)
 
                 pin = get_euserv_pin(
-                    self.config.email,
+                    self.config.email_pin,
                     self.config.email_password,
                     self.config.imap_server
                 )
@@ -769,7 +831,7 @@ class EUserv:
             logger.debug("步骤3: 等待并获取 PIN 码...")
             time.sleep(8)
             pin = get_euserv_pin(
-                self.config.email,
+                self.config.email_pin,
                 self.config.email_password,
                 self.config.imap_server
             )
@@ -828,8 +890,25 @@ class EUserv:
             # with open('debug_resp5.html', 'w', encoding='utf-8') as f:
             #     f.write(resp5.text)
             
-            logger.info(f"✅ 服务器 {order_id} 续期成功")
-            return True
+            # 步骤6: 验证续期结果（重新拉取服务器列表，对比可续期日期是否变化）
+            logger.debug("步骤6: 点击续期13秒后验证续期结果...")
+            time.sleep(13)
+            servers_after = self.get_servers()
+            if order_id in servers_after:
+                _, new_date = servers_after[order_id]
+                _, old_date = (True, "")  # 旧日期在外层已知，此处仅做二次确认
+                # 续期成功特征：服务器不再处于"可续期"状态，或可续期日期已推后
+                can_renew_after, _ = servers_after[order_id]
+                if not can_renew_after:
+                    logger.info(f"✅ 服务器 {order_id} 续期验证通过（新可续期日期: {new_date}）")
+                    return True
+                else:
+                    logger.warning(f"⚠️ 服务器 {order_id} 续期后状态未变化，可能续期未生效（可续期日期: {new_date}）")
+                    return False
+            else:
+                # 无法重新获取该服务器信息，保守认为成功（接口本身未报错）
+                logger.warning(f"⚠️ 服务器 {order_id} 续期后无法重新获取状态，接口未报错，视为成功")
+                return True
             
         except json.JSONDecodeError as e:
             logger.error(f"❌ JSON 解析失败: {e}", exc_info=True)
@@ -935,7 +1014,8 @@ def process_account(account_config: AccountConfig, global_config: GlobalConfig) 
         'success': False,
         'servers': {},
         'renew_results': [],
-        'error': None
+        'error': None,
+        'error_type': None,   # 'login' | 'get_servers' | 'exception'
     }
     
     try:
@@ -954,6 +1034,7 @@ def process_account(account_config: AccountConfig, global_config: GlobalConfig) 
         
         if not login_success:
             result['error'] = "登录失败"
+            result['error_type'] = 'login'
             return result
         
         # 更新用户信息
@@ -965,6 +1046,7 @@ def process_account(account_config: AccountConfig, global_config: GlobalConfig) 
         
         if not servers:
             result['error'] = "未找到任何服务器"
+            result['error_type'] = 'get_servers'
             result['success'] = True  # 登录成功，只是没有服务器
             return result
         
@@ -993,6 +1075,7 @@ def process_account(account_config: AccountConfig, global_config: GlobalConfig) 
     except Exception as e:
         logger.error(f"处理账号 {account_config.email} 时发生异常: {e}", exc_info=True)
         result['error'] = str(e)
+        result['error_type'] = 'exception'
     
     return result
 
@@ -1034,46 +1117,72 @@ def main():
                     'error': f"未预期的异常: {str(e)}"
                 })
     
-    # 生成汇总报告
+    # 生成汇总报告 & 按需通知
     logger.info("\n" + "=" * 60)
     logger.info("处理结果汇总")
     logger.info("=" * 60)
     
-    message_parts = [f"<b>🔄 EUserv 多账号续期报告</b>\n"]
-    message_parts.append(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-    message_parts.append(f"处理账号数: {len(all_results)}\n")
-    
+    # 判断是否需要发通知
+    notify_parts = []   # 需要通知的内容片段
+    time_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
     for result in all_results:
         email = result['email']
         logger.info(f"\n账号: {email}")
-        message_parts.append(f"\n<b>📧 账号: {email}</b>")
-        
+
         if not result['success']:
+            error_type = result.get('error_type', 'exception')
             error_msg = result.get('error', '未知错误')
             logger.error(f"  ❌ 处理失败: {error_msg}")
-            message_parts.append(f"  ❌ 处理失败: {error_msg}")
+
+            # ① 登录失败 → 通知
+            if error_type == 'login':
+                notify_parts.append(
+                    f"<b>📧 {email}</b>\n  ❌ 登录处理失败: {error_msg}"
+                )
+            # ② 其他异常 → 通知
+            elif error_type == 'exception':
+                notify_parts.append(
+                    f"<b>📧 {email}</b>\n  ❌ 处理异常: {error_msg}"
+                )
             continue
-        
+
         servers = result.get('servers', {})
         logger.info(f"  服务器数量: {len(servers)}")
-        
+
+        # ③ 获取服务器信息失败 → 通知
+        if result.get('error_type') == 'get_servers':
+            logger.warning(f"  ⚠️ {result.get('error')}")
+            notify_parts.append(
+                f"<b>📧 {email}</b>\n  ⚠️ 获取服务器信息失败: {result.get('error')}"
+            )
+            continue
+
         renew_results = result.get('renew_results', [])
         if renew_results:
             logger.info(f"  续期操作: {len(renew_results)} 个")
-            for renew_result in renew_results:
-                logger.info(f"    {renew_result['message']}")
-                message_parts.append(f"  {renew_result['message']}")
+            renew_lines = []
+            for rr in renew_results:
+                logger.info(f"    {rr['message']}")
+                renew_lines.append(f"  {rr['message']}")
+            # ④ 有续期操作（不管成功失败）→ 通知
+            notify_parts.append(
+                f"<b>📧 {email}</b>\n" + "\n".join(renew_lines)
+            )
         else:
+            # ⑤ 无需续期 → 仅记录日志，不发通知
             logger.info("  ✓ 所有服务器均无需续期")
-            message_parts.append("  ✓ 所有服务器均无需续期")
             for order_id, (can_renew, can_renew_date) in servers.items():
                 if can_renew_date:
-                    message_parts.append(f"    订单 {order_id}: 可续期日期 {can_renew_date}")
-    
-    # 发送 Telegram 通知
-    message = "\n".join(message_parts)
-    # send_telegram(message, GLOBAL_CONFIG)
-    send_notification("EUserv 续期报告", message, GLOBAL_CONFIG)
+                    logger.info(f"    订单 {order_id}: 可续期日期 {can_renew_date}")
+
+    # 只有存在需要通知的事件时才发送
+    if notify_parts:
+        header = f"<b>🔄 EUserv 续期通知</b>\n时间: {time_str}\n"
+        message = header + "\n\n".join(notify_parts)
+        send_notification("EUserv 续期通知", message, GLOBAL_CONFIG)
+    else:
+        logger.info("✅ 本次无续期操作，无需发送通知")
     
     logger.info("\n" + "=" * 60)
     logger.info("执行完成")
