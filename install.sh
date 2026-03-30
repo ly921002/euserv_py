@@ -76,9 +76,10 @@ EOF
 
 # -------------------------------------------------------
 # 变量名后缀规则（与 euser_renew.py 完全一致）：
-#   账号1 → 无后缀: EUSERV_EMAIL / EUSERV_PASSWORD / IMAP_SERV / EMAIL_PASS
-#   账号2 → 后缀2:  EUSERV_EMAIL2 / EUSERV_PASSWORD2 / IMAP_SERV2 / EMAIL_PASS2
+#   账号1 → 无后缀: EUSERV_EMAIL / EUSERV_PASSWORD / EMAIL_PASS / EMAIL_PIN(可选)
+#   账号2 → 后缀2:  EUSERV_EMAIL2 / EUSERV_PASSWORD2 / EMAIL_PASS2 / EMAIL_PIN2(可选)
 #   账号N → 后缀N
+#   IMAP_SERV 已废弃，IMAP 地址由 euser_renew.py 根据 EMAIL_PIN（或 EUSERV_EMAIL）自动推断
 # -------------------------------------------------------
 _suffix() {
     # 账号1返回空字符串，账号2+返回数字
@@ -105,7 +106,7 @@ configure_env() {
     print_info "配置账号信息..."
     echo ""
 
-    accounts=()   # 每个元素: "email|password|imap|pin_pass"
+    accounts=()   # 每个元素: "email|password|pin_email|pin_pass"
     account_index=1
 
     print_info "=== EUserv 账号配置（支持多个账号，每个账号有独立的收件邮箱）==="
@@ -116,8 +117,8 @@ configure_env() {
         read -p "  EUserv 登录邮箱: " acc_email
         read -sp "  EUserv 登录密码: " acc_password
         echo ""
-        read -p "  IMAP服务器 (默认 imap.gmail.com): " acc_imap
-        acc_imap="${acc_imap:-imap.gmail.com}"
+        read -p "  接收PIN的邮箱 (直接回车则与登录邮箱相同): " acc_pin_email
+        acc_pin_email="${acc_pin_email:-}"
         read -sp "  接收PIN邮箱的应用专用密码: " acc_pin_pass
         echo ""
 
@@ -126,7 +127,7 @@ configure_env() {
             continue
         fi
 
-        accounts+=("${acc_email}|${acc_password}|${acc_imap}|${acc_pin_pass}")
+        accounts+=("${acc_email}|${acc_password}|${acc_pin_email}|${acc_pin_pass}")
         account_index=$((account_index + 1))
 
         echo ""
@@ -149,22 +150,26 @@ configure_env() {
     cat > ${CONFIG_FILE} <<EOF
 # EUserv 多账号配置
 # 账号1无数字后缀，账号2起追加数字: EUSERV_EMAIL2, EUSERV_EMAIL3 ...
+# EMAIL_PIN 为可选项，未填写时 PIN 发送到登录邮箱；IMAP 地址由脚本自动推断，无需配置
 
 EOF
 
     local idx=1
     for entry in "${accounts[@]}"; do
-        IFS='|' read -r e p imap pin_e pin_p <<< "$entry"
+        IFS='|' read -r e p pin_e pin_p <<< "$entry"
         local sfx
         [[ "$idx" -eq 1 ]] && sfx="" || sfx="$idx"
         cat >> ${CONFIG_FILE} <<EOF
 # 账号 $idx
 EUSERV_EMAIL${sfx}=${e}
 EUSERV_PASSWORD${sfx}=${p}
-IMAP_SERV${sfx}=${imap}
 EMAIL_PASS${sfx}=${pin_p}
-
 EOF
+        # EMAIL_PIN 仅在与登录邮箱不同时写入
+        if [[ -n "$pin_e" && "$pin_e" != "$e" ]]; then
+            echo "EMAIL_PIN${sfx}=${pin_e}" >> ${CONFIG_FILE}
+        fi
+        echo "" >> ${CONFIG_FILE}
         idx=$((idx + 1))
     done
 
@@ -485,7 +490,7 @@ _delete_account_fields() {
     local idx=$1
     local sfx
     [[ "$idx" -eq 1 ]] && sfx="" || sfx="$idx"
-    for prefix in EUSERV_EMAIL EUSERV_PASSWORD IMAP_SERV EMAIL_PASS; do
+    for prefix in EUSERV_EMAIL EUSERV_PASSWORD EMAIL_PASS EMAIL_PIN; do
         sed -i "/^${prefix}${sfx}=/d" "${CONFIG_FILE}"
         # 删掉上面可能残留的注释行 "# 账号 N"
         sed -i "/^# 账号 ${idx}$/d" "${CONFIG_FILE}"
@@ -498,7 +503,7 @@ _rename_account() {
     local sfx_from sfx_to
     [[ "$from" -eq 1 ]] && sfx_from="" || sfx_from="$from"
     [[ "$to"   -eq 1 ]] && sfx_to=""   || sfx_to="$to"
-    for prefix in EUSERV_EMAIL EUSERV_PASSWORD IMAP_SERV EMAIL_PASS; do
+    for prefix in EUSERV_EMAIL EUSERV_PASSWORD EMAIL_PASS EMAIL_PIN; do
         local old_key="${prefix}${sfx_from}"
         local new_key="${prefix}${sfx_to}"
         local val
@@ -616,11 +621,12 @@ _list_accounts() {
         return
     fi
     for i in $(seq 1 "$count"); do
-        local email imap
+        local email pin_email
         email=$(_get_field EUSERV_EMAIL "$i")
-        imap=$(_get_field IMAP_SERV "$i")
-        printf "  账号 #%-2s  登录: %-30s  IMAP: %-20s" \
-               "$i" "$email" "$imap"
+        pin_email=$(_get_field EMAIL_PIN "$i")
+        [[ -z "$pin_email" ]] && pin_email="（同登录邮箱）"
+        printf "  账号 #%-2s  登录: %-30s  PIN收件: %s\n" \
+               "$i" "$email" "$pin_email"
     done
 }
 
@@ -655,8 +661,7 @@ _add_account() {
 
     read -p "  EUserv 登录邮箱: " new_email
     read -sp "  EUserv 登录密码: " new_pass; echo ""
-    read -p "  IMAP服务器 (默认 imap.gmail.com): " new_imap
-    new_imap="${new_imap:-imap.gmail.com}"
+    read -p "  接收PIN的邮箱 (直接回车则与登录邮箱相同): " new_pin_email
     read -sp "  接收PIN邮箱的应用专用密码: " new_pin_pass; echo ""
 
     if [[ -z "$new_email" || -z "$new_pass" || -z "$new_pin_pass" ]]; then
@@ -670,9 +675,12 @@ _add_account() {
         echo "# 账号 ${new_idx}"
         echo "EUSERV_EMAIL${sfx}=${new_email}"
         echo "EUSERV_PASSWORD${sfx}=${new_pass}"
-        echo "IMAP_SERV${sfx}=${new_imap}"
         echo "EMAIL_PASS${sfx}=${new_pin_pass}"
     } >> "${CONFIG_FILE}"
+    # EMAIL_PIN 仅在与登录邮箱不同时写入
+    if [[ -n "$new_pin_email" && "$new_pin_email" != "$new_email" ]]; then
+        echo "EMAIL_PIN${sfx}=${new_pin_email}" >> "${CONFIG_FILE}"
+    fi
     print_success "账号 #${new_idx} 已添加: ${new_email}"
 }
 
@@ -719,13 +727,21 @@ _edit_account() {
     echo ""
     echo "当前配置:"
     echo "  登录邮箱: $(_get_field EUSERV_EMAIL $edit_idx)"
-    echo "  IMAP服务器: $(_get_field IMAP_SERV $edit_idx)"
+    local cur_pin; cur_pin=$(_get_field EMAIL_PIN $edit_idx)
+    echo "  PIN收件邮箱: ${cur_pin:-（同登录邮箱）}"
     echo "（直接回车表示保持不变）"
     echo ""
 
     read -p "  新的登录邮箱: " v; [[ -n "$v" ]] && _set_field EUSERV_EMAIL "$edit_idx" "$v"
     read -sp "  新的登录密码: " v; echo ""; [[ -n "$v" ]] && _set_field EUSERV_PASSWORD "$edit_idx" "$v"
-    read -p "  新的IMAP服务器: " v; [[ -n "$v" ]] && _set_field IMAP_SERV "$edit_idx" "$v"
+    read -p "  新的PIN收件邮箱 (留空=同登录邮箱): " v
+    if [[ -n "$v" ]]; then
+        _set_field EMAIL_PIN "$edit_idx" "$v"
+    else
+        # 清除 EMAIL_PIN 字段（留空即回退到登录邮箱）
+        local sfx; [[ "$edit_idx" -eq 1 ]] && sfx="" || sfx="$edit_idx"
+        sed -i "/^EMAIL_PIN${sfx}=/d" "${CONFIG_FILE}"
+    fi
     read -sp "  新的收件邮箱密码: " v; echo ""; [[ -n "$v" ]] && _set_field EMAIL_PASS "$edit_idx" "$v"
 
     print_success "账号 #${edit_idx} 已更新"
