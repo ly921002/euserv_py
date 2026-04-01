@@ -23,7 +23,6 @@ import ddddocr
 import requests
 from bs4 import BeautifulSoup
 from imap_tools import MailBox, AND
-from urllib.parse import quote
 
 from dotenv import load_dotenv
 if os.path.exists('dev.env'):
@@ -128,79 +127,71 @@ class GlobalConfig:
 # ============== 配置区 ==============
 # 全局配置
 GLOBAL_CONFIG = GlobalConfig(
-    telegram_bot_token=os.getenv("TG_BOT_TOKEN"), # tg的api token
-    telegram_chat_id=os.getenv("TG_CHAT_ID"), # tg的userid
-    bark_url=os.getenv("BARK_URL"),  #ios系统bark推送,基础格式：https://api.day.app/your_key/，或自建服务器：https://your-bark-server.com/your_key/
-    max_workers=3,
-    max_login_retries=5
+    telegram_bot_token=os.getenv("TG_BOT_TOKEN"),   # TG 的 API Token
+    telegram_chat_id=os.getenv("TG_CHAT_ID"),        # TG 的 User ID
+    bark_url=os.getenv("BARK_URL"),                  # iOS Bark 推送，格式：https://api.day.app/your_key/
+    max_workers=int(os.getenv("MAX_WORKERS", 3)),
+    max_login_retries=int(os.getenv("MAX_LOGIN_RETRIES", 5)),
 )
 
 
-# 账号列表配置
-# EMAIL_PIN: 可选。用于接收登录/续期 PIN 码的邮箱。
-#            未配置时自动使用 EUSERV_EMAIL。
-# IMAP_SERV: 已废弃，改为根据 EMAIL_PIN（或 EUSERV_EMAIL）域名自动推断。
-#            如需覆盖，可通过 AccountConfig(imap_server=...) 手动指定。
-ACCOUNTS = [
-    AccountConfig(
-        email=os.getenv("EUSERV_EMAIL"),
-        password=os.getenv("EUSERV_PASSWORD"),
-        email_pin=os.getenv("EMAIL_PIN"),        # 可选，未配置则使用 EUSERV_EMAIL
-        email_password=os.getenv("EMAIL_PASS"),  # PIN 邮箱的密码（Gmail 应用专用密码等）
-    ),
-    # 添加更多账号示例：
-    AccountConfig(
-        email=os.getenv("EUSERV_EMAIL2"),
-        password=os.getenv("EUSERV_PASSWORD2"),
-        email_pin=os.getenv("EMAIL_PIN2"),
-        email_password=os.getenv("EMAIL_PASS2"),
-    ),
-    AccountConfig(
-        email=os.getenv("EUSERV_EMAIL3"),
-        password=os.getenv("EUSERV_PASSWORD3"),
-        email_pin=os.getenv("EMAIL_PIN3"),
-        email_password=os.getenv("EMAIL_PASS3"),
-    ),
-    AccountConfig(
-        email=os.getenv("EUSERV_EMAIL4"),
-        password=os.getenv("EUSERV_PASSWORD4"),
-        email_pin=os.getenv("EMAIL_PIN4"),
-        email_password=os.getenv("EMAIL_PASS4"),
-    ),
-    AccountConfig(
-        email=os.getenv("EUSERV_EMAIL5"),
-        password=os.getenv("EUSERV_PASSWORD5"),
-        email_pin=os.getenv("EMAIL_PIN5"),
-        email_password=os.getenv("EMAIL_PASS5"),
-    ),
-]
+def load_accounts_from_env() -> List[AccountConfig]:
+    """
+    动态从环境变量加载账号，支持任意数量。
+    第 1 个账号：EUSERV_EMAIL / EUSERV_PASSWORD / EMAIL_PIN / EMAIL_PASS
+    第 N 个账号：EUSERV_EMAILN / EUSERV_PASSWORDN / EMAIL_PINN / EMAIL_PASSN（N >= 2）
+    只要 EUSERV_EMAIL 存在即继续读取，遇到第一个空缺则停止。
+    """
+    accounts = []
+    i = 1
+    while True:
+        suffix = "" if i == 1 else str(i)
+        email = os.getenv(f"EUSERV_EMAIL{suffix}")
+        if not email or not email.strip():
+            break
+        password = os.getenv(f"EUSERV_PASSWORD{suffix}")
+        accounts.append(AccountConfig(
+            email=email,
+            password=password,
+            email_pin=os.getenv(f"EMAIL_PIN{suffix}"),       # 可选，未配置则使用 EUSERV_EMAIL
+            email_password=os.getenv(f"EMAIL_PASS{suffix}"),  # PIN 邮箱的密码（Gmail 应用专用密码等）
+        ))
+        i += 1
+    return accounts
+
+
+# 账号列表 - 动态从环境变量加载
+# EMAIL_PIN：可选，用于接收登录/续期 PIN 码的邮箱，未配置则使用 EUSERV_EMAIL
+# IMAP 服务器根据 EMAIL_PIN（或 EUSERV_EMAIL）域名自动推断，如需覆盖可在 AccountConfig 中手动指定
+ACCOUNTS = load_accounts_from_env()
 
 # ====================================
 
 
+# 数字字符纠正映射表（用于操作数）—— 模块级常量，避免每次调用重建
+_DIGIT_CORRECTIONS: Dict[str, str] = {
+    'O': '0', 'o': '0',  # 字母O → 数字0
+    'D': '0', 'Q': '0',  # D/Q可能是0
+    'I': '1', 'i': '1', 'l': '1', '|': '1',  # I/l/竖线 → 数字1
+    'Z': '2', 'z': '2',  # 字母Z → 数字2
+    'S': '5', 's': '5',  # 字母S → 数字5
+    'G': '6', 'b': '6',  # 字母G → 数字6
+    'B': '8', 'g': '8',  # 字母B → 数字8
+}
+
+# 运算符映射表（用于中间位置）—— 模块级常量
+_OPERATOR_CORRECTIONS: Dict[str, str] = {
+    'T': '+', 't': '+', 'F': '+', 'f': '+', 'r': '+',  # T → 加号
+    'I': '-', 'i': '-', '|': '-', '1': '-', 'l': '-',  # 竖线类 → 减号
+    'x': '×', 'X': '×',  # x/X → 乘号
+    '*': '×', '×': '×',  # 统一乘号
+    '÷': '/', ':': '/',  # 统一除号
+    '+': '+', '-': '-', '/': '/',  # 保留原有运算符
+}
+
+
 def recognize_and_calculate(captcha_image_url: str, session: requests.Session) -> Optional[str]:
     """识别并计算验证码（线程安全）"""
-    
-    # 数字字符纠正映射表（用于操作数）
-    DIGIT_CORRECTIONS = {
-        'O': '0', 'o': '0',  # 字母O → 数字0
-        'D': '0', 'Q': '0',  # D/Q可能是0
-        'I': '1', 'i': '1', 'l': '1', '|': '1',  # I/l/竖线 → 数字1
-        'Z': '2', 'z': '2',  # 字母Z → 数字2
-        'S': '5', 's': '5',  # 字母S → 数字5
-        'G': '6', 'b': '6',  # 字母G → 数字6
-        'B': '8', 'g': '8',  # 字母B → 数字8
-    }
-    
-    # 运算符映射表（用于中间位置）
-    OPERATOR_CORRECTIONS = {
-        'T': '+', 't': '+', 'F': '+', 'f': '+', 'r': '+', # T → 加号
-        'I': '-', 'i': '-', '|': '-', '1': '-', 'l': '-',  # 竖线类 → 减号
-        'x': '×', 'X': '×',  # x/X → 乘号
-        '*': '×', '×': '×',  # 统一乘号
-        '÷': '/', ':': '/',  # 统一除号
-        '+': '+', '-': '-', '/': '/',  # 保留原有运算符
-    }
     
     def aggressive_digit_convert(text: str) -> str:
         """激进的数字转换：尽可能把所有字符转为数字"""
@@ -208,12 +199,11 @@ def recognize_and_calculate(captcha_image_url: str, session: requests.Session) -
         for char in text:
             if char.isdigit():
                 result.append(char)
-            elif char in DIGIT_CORRECTIONS:
-                result.append(DIGIT_CORRECTIONS[char])
-            elif char.upper() in DIGIT_CORRECTIONS:
-                result.append(DIGIT_CORRECTIONS[char.upper()])
+            elif char in _DIGIT_CORRECTIONS:
+                result.append(_DIGIT_CORRECTIONS[char])
+            elif char.upper() in _DIGIT_CORRECTIONS:
+                result.append(_DIGIT_CORRECTIONS[char.upper()])
             else:
-                # 字母无法转换，保留原样
                 result.append(char)
         return ''.join(result)
     
@@ -222,28 +212,47 @@ def recognize_and_calculate(captcha_image_url: str, session: requests.Session) -
         logger.debug("尝试自动识别验证码...")
         response = session.get(captcha_image_url)
         img = Image.open(io.BytesIO(response.content)).convert('RGB')
-        
-        # 颜色过滤（保留橙色文字，噪点变白）
-        pixels = img.load()
-        width, height = img.size
-        for x in range(width):
-            for y in range(height):
-                r, g, b = pixels[x, y]
-                if not (r > 200 and 100 < g < 220 and b < 80):
-                    pixels[x, y] = (255, 255, 255)
+
+        # 颜色过滤（numpy 向量化：保留橙色文字，噪点变白）
+        try:
+            import numpy as np
+            arr = np.array(img, dtype=np.uint8)
+            mask = ~((arr[:, :, 0] > 200) & (arr[:, :, 1] > 100) & (arr[:, :, 1] < 220) & (arr[:, :, 2] < 80))
+            arr[mask] = [255, 255, 255]
+            img = Image.fromarray(arr)
+            width, height = img.size
+        except ImportError:
+            # numpy 不可用时回退到逐像素处理
+            pixels = img.load()
+            width, height = img.size
+            for x in range(width):
+                for y in range(height):
+                    r, g, b = pixels[x, y]
+                    if not (r > 200 and 100 < g < 220 and b < 80):
+                        pixels[x, y] = (255, 255, 255)
         
         # 转灰度 + 二值化
         img = img.convert('L')
         threshold = 200
         img = img.point(lambda x: 0 if x < threshold else 255, '1')
         
-        # 去边框
-        border = 10
-        pixels = img.load()
-        for x in range(width):
-            for y in range(height):
-                if x < border or x >= width - border or y < border or y >= height - border:
-                    pixels[x, y] = 255
+        # 去边框（numpy 向量化直接切片置白）
+        try:
+            import numpy as np
+            border = 10
+            arr2 = np.array(img.convert('L'), dtype=np.uint8)
+            arr2[:border, :] = 255
+            arr2[-border:, :] = 255
+            arr2[:, :border] = 255
+            arr2[:, -border:] = 255
+            img = Image.fromarray(arr2).point(lambda x: 0 if x < 128 else 255, '1')
+        except ImportError:
+            border = 10
+            pixels = img.load()
+            for x in range(width):
+                for y in range(height):
+                    if x < border or x >= width - border or y < border or y >= height - border:
+                        pixels[x, y] = 255
         
         output = io.BytesIO()
         img.save(output, format='PNG')
@@ -275,9 +284,9 @@ def recognize_and_calculate(captcha_image_url: str, session: requests.Session) -
             left_char, mid_char, right_char = raw_text[0], raw_text[1], raw_text[2]
             
             # 左右转数字，中间转运算符
-            left_corrected = DIGIT_CORRECTIONS.get(left_char, left_char)
-            right_corrected = DIGIT_CORRECTIONS.get(right_char, right_char)
-            op_char = OPERATOR_CORRECTIONS.get(mid_char, mid_char)
+            left_corrected = _DIGIT_CORRECTIONS.get(left_char, left_char)
+            right_corrected = _DIGIT_CORRECTIONS.get(right_char, right_char)
+            op_char = _OPERATOR_CORRECTIONS.get(mid_char, mid_char)
             
             logger.debug(f"3位纠正: '{left_char}'→'{left_corrected}' '{mid_char}'→'{op_char}' '{right_char}'→'{right_corrected}'")
             
@@ -289,7 +298,7 @@ def recognize_and_calculate(captcha_image_url: str, session: requests.Session) -
         # 策略2：正则匹配运算表达式（支持多位数）
         # 先进行字符纠正
         corrected_text = raw_text
-        for old, new in DIGIT_CORRECTIONS.items():
+        for old, new in _DIGIT_CORRECTIONS.items():
             corrected_text = corrected_text.replace(old, new)
         
         # 匹配模式：数字 + 运算符 + 数字
@@ -298,7 +307,7 @@ def recognize_and_calculate(captcha_image_url: str, session: requests.Session) -
         
         if match:
             left_str, op, right_str = match.groups()
-            op = OPERATOR_CORRECTIONS.get(op, op)  # 运算符纠正
+            op = _OPERATOR_CORRECTIONS.get(op, op)  # 运算符纠正
             
             left = int(left_str)
             right = int(right_str)
@@ -441,9 +450,19 @@ class EUserv:
         self._load_cookies()
 
     def _save_cookies(self):
-        """将当前 session 的 Cookie 持久化到文件"""
+        """将当前 session 的 Cookie 持久化到文件（保留完整属性）"""
         try:
-            cookies = {c.name: c.value for c in self.session.cookies}
+            cookies = [
+                {
+                    'name':    c.name,
+                    'value':   c.value,
+                    'domain':  c.domain or 'support.euserv.com',
+                    'path':    c.path or '/',
+                    'expires': c.expires,
+                    'secure':  c.secure,
+                }
+                for c in self.session.cookies
+            ]
             with open(self.cookie_file, 'w', encoding='utf-8') as f:
                 json.dump(cookies, f)
             logger.info(f"✅ 信任设备 Cookie 已保存: {self.cookie_file}")
@@ -451,14 +470,24 @@ class EUserv:
             logger.warning(f"⚠️ 保存 Cookie 失败: {e}")
 
     def _load_cookies(self):
-        """从文件加载 Cookie 到 session（登录前携带，让服务器跳过 PIN 验证）"""
+        """从文件加载 Cookie 到 session，兼容旧版 name→value 格式"""
         if not os.path.exists(self.cookie_file):
             return
         try:
             with open(self.cookie_file, 'r', encoding='utf-8') as f:
                 cookies = json.load(f)
-            for name, value in cookies.items():
-                self.session.cookies.set(name, value, domain='support.euserv.com')
+            # 兼容旧格式 {"name": "value", ...}
+            if isinstance(cookies, dict):
+                for name, value in cookies.items():
+                    self.session.cookies.set(name, value, domain='support.euserv.com')
+            else:
+                # 新格式：完整属性列表
+                for c in cookies:
+                    self.session.cookies.set(
+                        c['name'], c['value'],
+                        domain=c.get('domain', 'support.euserv.com'),
+                        path=c.get('path', '/'),
+                    )
             logger.info(f"🍪 已加载信任设备 Cookie，登录时将跳过 PIN 验证")
         except Exception as e:
             logger.warning(f"⚠️ 加载 Cookie 失败: {e}")
@@ -608,23 +637,28 @@ class EUserv:
 
 
     def update_info(self):
-        # 判断当前日期是否为2号或22号，一个月更新两次
+        # 支持通过环境变量 UPDATE_INFO_DAYS 自定义触发日（逗号分隔），默认 2,22
+        _days_str = os.getenv("UPDATE_INFO_DAYS", "2,22")
+        try:
+            _update_days = {int(d.strip()) for d in _days_str.split(',') if d.strip().isdigit()}
+        except Exception:
+            _update_days = {2, 22}
         current_day = datetime.now().day
-        if current_day not in [2, 22]:
+        if current_day not in _update_days:
             return
 
         logger.info(f"更新用户信息...")
         try:
-            # 更新用户信息，euserv每隔一段时间就需要用户更新信息，每个月2号，22号
+            # 更新用户信息，euserv每隔一段时间就需要用户更新信息，每个月 UPDATE_INFO_DAYS 指定的日期触发
             #1.进入用户界面
             url = f"https://support.euserv.com/index.iphp?sess_id={self.sess_id}&action=show_customerdata"
             showinfo_data = {
                 'sess_id': self.sess_id,
                 'action': 'show_customerdata'
             }
-            headers = {'user-agent': USER_AGENT, 
+            headers = {'user-agent': USER_AGENT,
                        'host': 'support.euserv.com',
-                       'referer': 'https://support.euserv.com/index.iphp?sess_id={self.sess_id}&subaction=show_kwk_main'
+                       'referer': f'https://support.euserv.com/index.iphp?sess_id={self.sess_id}&subaction=show_kwk_main'
                        }
             
             logger.info(f"进入用户界面...")
@@ -895,10 +929,8 @@ class EUserv:
             time.sleep(13)
             servers_after = self.get_servers()
             if order_id in servers_after:
-                _, new_date = servers_after[order_id]
-                _, old_date = (True, "")  # 旧日期在外层已知，此处仅做二次确认
-                # 续期成功特征：服务器不再处于"可续期"状态，或可续期日期已推后
-                can_renew_after, _ = servers_after[order_id]
+                can_renew_after, new_date = servers_after[order_id]
+                # 续期成功特征：服务器不再处于"可续期"状态
                 if not can_renew_after:
                     logger.info(f"✅ 服务器 {order_id} 续期验证通过（新可续期日期: {new_date}）")
                     return True
@@ -934,14 +966,7 @@ def send_bark(title: str, content: str, config: GlobalConfig):
         return
     
     try:
-        # 确保 URL 以 / 结尾
-        bark_url = config.bark_url.rstrip('/') + '/'
-        
-        # URL 编码标题和内容
-        encoded_title = quote(title)
-        encoded_content = quote(content)
-        
-        post_url = bark_url.rstrip('/')
+        post_url = config.bark_url.rstrip('/')
         data = {
             "title": title,
             "body": content,
