@@ -1076,8 +1076,14 @@ def process_account(account_config: AccountConfig, global_config: GlobalConfig) 
             return result
         
         # 检查并续期
+        TARGET_SERVERS = {"468217"}  # 可放函数外作为全局变量
+        
         for order_id, (can_renew, can_renew_date) in servers.items():
-            logger.info(f"检查服务器: {order_id}")
+            if order_id not in TARGET_SERVERS:
+                logger.info(f"跳过服务器: {order_id}（不在目标列表）")
+                continue
+        
+            logger.info(f"检查目标服务器: {order_id}")
             if can_renew:
                 logger.info(f"⏰ 服务器 {order_id} 可以续期")
                 if euserv.renew_server(order_id):
