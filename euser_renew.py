@@ -918,7 +918,8 @@ class EUserv:
             if resp2.status_code != 200:
                 logger.error("❌ PIN发送请求失败")
                 return False
-            
+            time.sleep(30)
+            logger.debug("等待接收PIN")
             # 步骤3: 获取 PIN（内部有轮询重试，不再硬等）
             logger.debug("步骤3: 获取 PIN 码...")
             pin = get_euserv_pin(
